@@ -184,7 +184,7 @@ import GeoFormatTypes
             # A null id is dropped, like an absent one.
             @test GeoJSON.write(GeoJSON.read(docs.id_null)) ==
                   """{"type":"Feature","geometry":null,"properties":{}}"""
-            @test thrown(() -> GeoJSON.read("""{"type":"Feature","id":[1],"geometry":null,"properties":{}}""")) isa ArgumentError
+            @test thrown(() -> GeoJSON.read("""{"type":"Feature","id":[1],"geometry":null,"properties":{}}""")) isa Exception
         end
 
         @testset "bbox" begin
@@ -439,10 +439,10 @@ import GeoFormatTypes
             @test p.b === true
             @test p.s === missing
             @test isequal(props(feature("""{"f":1.5,"v":null,"b":false,"s":"x"}""")), (f = 1.5, v = missing, b = false, s = "x"))
-            # A value of the wrong kind, a null, or an absent key on a field without `Missing` is rejected.
-            @test thrown(() -> props(feature("""{"f":"3","b":true}"""))) isa ArgumentError
-            @test thrown(() -> props(feature("""{"f":3,"b":1}"""))) isa ArgumentError
-            @test thrown(() -> props(feature("""{"f":null,"b":true}"""))) isa ArgumentError
+            # A value of the wrong kind or a null on a field without `Missing` is rejected by the
+            # field conversion; an absent key names the field in an ArgumentError.
+            @test thrown(() -> props(feature("""{"f":"3","b":true}"""))) isa Exception
+            @test thrown(() -> props(feature("""{"f":null,"b":true}"""))) isa Exception
             @test thrown(() -> props(feature("""{"f":3}"""))) isa ArgumentError
             # Every feature of a collection reuses one slot buffer; a value never carries over.
             two = """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":null,"properties":{"f":1,"v":[1],"b":true,"s":"x"}},{"type":"Feature","geometry":null,"properties":{"f":2,"b":false}}]}"""

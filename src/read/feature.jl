@@ -10,7 +10,7 @@ end
 
 emptyprops(::Type{P}) where {P<:AbstractDict{String,Any}} = P()
 emptyprops(::Type{Nothing}) = nothing
-emptyprops(::Type{P}) where {P<:NamedTuple} = StructUtils.make(P, Dict{String,Any}())
+emptyprops(::Type{P}) where {P<:NamedTuple} = StructUtils.make(P, (;))
 emptyprops(::Type{P}) where {P} = _noprops(P)
 
 const Id = Union{Nothing,String,Int64,Float64}
@@ -78,7 +78,7 @@ StructUtils.make(st::JSON.JSONStyle, ::Type{Feature{D,T,G,P}}, src::LazyValues, 
 
 function readfeatures(st, ::Type{F}, v::LazyValues) where {F<:Feature}
     gettype(v) == ARRAY || throw(ArgumentError("\"features\" must be an array"))
-    return StructUtils.make(st, Vector{F}, v)
+    return readarray(st, F, v)
 end
 
 mutable struct CollectionSink{D,T,G,P,S}

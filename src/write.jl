@@ -17,11 +17,11 @@ Write `obj` as GeoJSON text to a `String`, an `IO`, or a file at `path` (streame
 `inline_limit` stay on one line, so the default keeps 2-D positions as `[x, y]`.
 """
 write(obj; pretty=false, inline_limit=3, geometrycolumn=nothing) =
-    JSON.json(_lower(obj, geometrycolumn); pretty, inline_limit)
+    JSON.json(_lower(obj, geometrycolumn); pretty, inline_limit, style=GeoJSONStyle())
 write(io::IO, obj; pretty=false, inline_limit=3, geometrycolumn=nothing) =
-    JSON.json(io, _lower(obj, geometrycolumn); pretty, inline_limit)
+    JSON.json(io, _lower(obj, geometrycolumn); pretty, inline_limit, style=GeoJSONStyle())
 write(path::AbstractString, obj; pretty=false, inline_limit=3, geometrycolumn=nothing) =
-    JSON.json(path, _lower(obj, geometrycolumn); pretty, inline_limit)
+    JSON.json(path, _lower(obj, geometrycolumn); pretty, inline_limit, style=GeoJSONStyle())
 
 # --- applyeach on the default JSON style -------------------------------------
 
@@ -37,8 +37,9 @@ macro emit(k, v)
     end)
 end
 
-# `G` of a `Feature` may be a union of several geometries, wider than the writer can split
-# statically; each branch hands `f` one of them. A `Feature` falls through unchanged.
+# `G` of a `Feature` may be a union wider than inference splits (four members); each branch
+# hands `f` one concrete geometry. Vectors and struct fields of unions are split by
+# StructUtils itself; this is the one place GeoJSON calls `f` with a union by hand.
 function _emitgeometry(f, k, g)
     g === nothing && return f(k, nothing)
     g isa Point && return f(k, g)
@@ -49,27 +50,6 @@ function _emitgeometry(f, k, g)
     g isa MultiPolygon && return f(k, g)
     g isa GeometryCollection && return f(k, g)
     return f(k, g)
-end
-
-"""
-    Geometries(v::Vector{AnyGeometry})
-
-Array view for the JSON writer over a GeometryCollection's members: each reaches the writer
-as one concrete geometry type.
-"""
-struct Geometries{V}
-    v::V
-end
-StructUtils.arraylike(::Type{<:Geometries}) = true
-Base.length(e::Geometries) = length(e.v)
-
-function StructUtils.applyeach(st::JSON.JSONStyle, f, e::Geometries)
-    v = e.v
-    for i in eachindex(v)
-        ret = _emitgeometry(f, i, @inbounds v[i])
-        ret isa StructUtils.EarlyReturn && return ret
-    end
-    return StructUtils.defaultstate(st)
 end
 
 # Foreign members are flat in the enclosing object; JSON.jl's `applyeach` over the pairs
@@ -91,7 +71,7 @@ function StructUtils.applyeach(st::JSON.JSONStyle, f, x::GeometryCollection)
     @emit "type" "GeometryCollection"
     bb = bbox(x)
     bb === nothing || @emit "bbox" bb
-    @emit "geometries" Geometries(geometry(x))
+    @emit "geometries" geometry(x)
     return _emitextras(st, f, extras(x))
 end
 

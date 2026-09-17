@@ -134,7 +134,7 @@ end
 
 @noinline function readgeoms(st, ::Val{D}, ::Type{T}, v::LazyValues) where {D,T}
     gettype(v) == ARRAY || throw(ArgumentError("\"geometries\" must be an array"))
-    return StructUtils.make(st, Vector{AnyGeometry{D,T}}, v)
+    return readarray(st, AnyGeometry{D,T}, v)
 end
 
 function (f::GeomSink{D,T})(k::PtrString, v::LazyValues) where {D,T}
