@@ -26,43 +26,6 @@ write(path::AbstractString, obj; pretty=false, inline_limit=3, geometrycolumn=no
 # --- applyeach on the default JSON style -------------------------------------
 
 """
-    Elements(v)
-    Objects(v)
-
-Array views for the JSON writer: elements reach it keyed by their integer index. `Elements`
-holds a coordinate tree and wraps nested vectors and tuples the same way, so positions write
-without per-element key strings. `Objects` holds features or geometries as its own view, so
-`applyeach` never re-enters itself from a feature array down to a position; inference widens
-that recursion to a dynamic call.
-"""
-struct Elements{V}
-    v::V
-end
-struct Objects{V}
-    v::V
-end
-StructUtils.arraylike(::Type{<:Union{Elements,Objects}}) = true
-Base.length(e::Union{Elements,Objects}) = length(e.v)
-
-"""
-    Values(v::Vector{Any})
-    Members(o::JSON.Object{String,Any})
-
-Array and object views for the JSON writer over a foreign-member value as [`read`](@ref) stores
-it: each value reaches the writer with a concrete type. One `applyeach` method per view keeps an
-array-in-object-in-array chain statically resolvable; inference widens a closure that re-enters
-one method from itself.
-"""
-struct Values
-    v::Vector{Any}
-end
-struct Members
-    o::JSON.Object{String,Any}
-end
-StructUtils.arraylike(::Type{Values}) = true
-Base.length(x::Values) = length(x.v)
-
-"""
     @emit key value
 
 Emit one member from inside an `applyeach` method, returning early when the writer asks to.
@@ -74,42 +37,8 @@ macro emit(k, v)
     end)
 end
 
-@noinline _badvalue() = throw(ArgumentError(
-    "a foreign member value must be null, Bool, Int64, Float64, BigInt, BigFloat, String, Vector{Any} or JSON.Object{String,Any}, as `read` stores them"))
-
-# The value types the reader stores; each branch hands `f` one concrete type. Inlined, so the
-# recursion through the writer runs on `json!` alone and stays resolvable under `--trim`.
-@inline function _emitvalue(f, k, v)
-    v === nothing && return f(k, nothing)
-    v isa Bool && return f(k, v)
-    v isa Int64 && return f(k, v)
-    v isa Float64 && return f(k, v)
-    v isa String && return f(k, v)
-    v isa Vector{Any} && return f(k, Values(v))
-    v isa JSON.Object{String,Any} && return f(k, Members(v))
-    v isa BigInt && return f(k, v)
-    v isa BigFloat && return f(k, v)
-    _badvalue()
-end
-
-# Out of line and unspecialized: a `lower` call on `Any` inside the ladder below turns every branch
-# of it into a dynamic call.
-@noinline _lowered(st, @nospecialize(v)) = StructUtils.lower(st, v)
-
-# The scalar types the reader stores in a properties dict, plus `missing` from tables; each branch
-# hands `f` one concrete type, and any other value takes the general lowering path.
-@inline function _emitproperty(st, f, k, v)
-    v isa String && return f(k, v)
-    v isa Float64 && return f(k, v)
-    v isa Int64 && return f(k, v)
-    v === nothing && return f(k, nothing)
-    v === missing && return f(k, nothing)
-    v isa Bool && return f(k, v)
-    return f(k, _lowered(st, v))
-end
-
-# `G` of a `Feature` may be a union of several geometries; each branch hands `f` one of them.
-# A `Feature` falls through unchanged.
+# `G` of a `Feature` may be a union of several geometries, wider than the writer can split
+# statically; each branch hands `f` one of them. A `Feature` falls through unchanged.
 function _emitgeometry(f, k, g)
     g === nothing && return f(k, nothing)
     g isa Point && return f(k, g)
@@ -122,20 +51,19 @@ function _emitgeometry(f, k, g)
     return f(k, g)
 end
 
-_element(st, x::Real) = x
-_element(st, x::Union{AbstractVector,Tuple}) = Elements(x)
-_element(st, x) = StructUtils.lower(st, x)
+"""
+    Geometries(v::Vector{AnyGeometry})
 
-function StructUtils.applyeach(st::JSON.JSONStyle, f, e::Elements)
-    v = e.v
-    for i in eachindex(v)
-        ret = f(i, _element(st, @inbounds v[i]))
-        ret isa StructUtils.EarlyReturn && return ret
-    end
-    return StructUtils.defaultstate(st)
+Array view for the JSON writer over a GeometryCollection's members: each reaches the writer
+as one concrete geometry type.
+"""
+struct Geometries{V}
+    v::V
 end
+StructUtils.arraylike(::Type{<:Geometries}) = true
+Base.length(e::Geometries) = length(e.v)
 
-function StructUtils.applyeach(st::JSON.JSONStyle, f, e::Objects)
+function StructUtils.applyeach(st::JSON.JSONStyle, f, e::Geometries)
     v = e.v
     for i in eachindex(v)
         ret = _emitgeometry(f, i, @inbounds v[i])
@@ -144,64 +72,17 @@ function StructUtils.applyeach(st::JSON.JSONStyle, f, e::Objects)
     return StructUtils.defaultstate(st)
 end
 
-function StructUtils.applyeach(st::JSON.JSONStyle, f, x::Values)
-    v = x.v
-    for i in eachindex(v)
-        ret = _emitvalue(f, i, @inbounds v[i])
-        ret isa StructUtils.EarlyReturn && return ret
-    end
-    return StructUtils.defaultstate(st)
-end
-
-function StructUtils.applyeach(st::JSON.JSONStyle, f, x::Members)
-    for (k, v) in x.o
-        ret = _emitvalue(f, k, v)
-        ret isa StructUtils.EarlyReturn && return ret
-    end
-    return StructUtils.defaultstate(st)
-end
-
-"""
-    DictMembers(p::AbstractDict{String,Any})
-
-Object view for the JSON writer over a schema-less properties container: members reach it in
-the container's iteration order, each value with a concrete type.
-"""
-struct DictMembers{P}
-    p::P
-end
-
-function StructUtils.applyeach(st::JSON.JSONStyle, f, x::DictMembers)
-    for (k, v) in x.p
-        ret = _emitproperty(st, f, k, v)
-        ret isa StructUtils.EarlyReturn && return ret
-    end
-    return StructUtils.defaultstate(st)
-end
-
-_propview(st, p::AbstractDict{String,Any}) = DictMembers(p)
-_propview(st, p) = StructUtils.lower(st, p)
-
-function _emitextras(st, f, extras)
-    extras === nothing && return StructUtils.defaultstate(st)
-    for (k, v) in extras
-        ret = _emitvalue(f, k, v)
-        ret isa StructUtils.EarlyReturn && return ret
-    end
-    return StructUtils.defaultstate(st)
-end
+# Foreign members are flat in the enclosing object; JSON.jl's `applyeach` over the pairs
+# hands each value to `f` with its concrete type.
+_emitextras(st, f, ::Nothing) = StructUtils.defaultstate(st)
+_emitextras(st, f, extras) = StructUtils.applyeach(st, f, extras)
 
 for G in (:Point, :LineString, :Polygon, :MultiPoint, :MultiLineString, :MultiPolygon)
     @eval function StructUtils.applyeach(st::JSON.JSONStyle, f, x::$G)
         @emit "type" $(String(G))
         bb = bbox(x)
-        bb === nothing || @emit "bbox" Elements(bb)
-        c = coordinates(x)
-        if c === nothing
-            @emit "coordinates" nothing
-        else
-            @emit "coordinates" Elements(c)
-        end
+        bb === nothing || @emit "bbox" bb
+        @emit "coordinates" coordinates(x)
         return _emitextras(st, f, extras(x))
     end
 end
@@ -209,8 +90,8 @@ end
 function StructUtils.applyeach(st::JSON.JSONStyle, f, x::GeometryCollection)
     @emit "type" "GeometryCollection"
     bb = bbox(x)
-    bb === nothing || @emit "bbox" Elements(bb)
-    @emit "geometries" Objects(geometry(x))
+    bb === nothing || @emit "bbox" bb
+    @emit "geometries" Geometries(geometry(x))
     return _emitextras(st, f, extras(x))
 end
 
@@ -219,90 +100,30 @@ function StructUtils.applyeach(st::JSON.JSONStyle, f, x::Feature)
     i = id(x)
     i === nothing || @emit "id" i
     bb = bbox(x)
-    bb === nothing || @emit "bbox" Elements(bb)
+    bb === nothing || @emit "bbox" bb
     ret = _emitgeometry(f, "geometry", geometry(x))
     ret isa StructUtils.EarlyReturn && return ret
-    @emit "properties" _propview(st, properties(x))
+    @emit "properties" properties(x)
     return _emitextras(st, f, extras(x))
 end
 
 function StructUtils.applyeach(st::JSON.JSONStyle, f, x::FeatureCollection)
     @emit "type" "FeatureCollection"
     bb = bbox(x)
-    bb === nothing || @emit "bbox" Elements(bb)
-    @emit "features" Objects(features(x))
+    bb === nothing || @emit "bbox" bb
+    @emit "features" features(x)
     return _emitextras(st, f, extras(x))
 end
 
 function StructUtils.applyeach(st::JSON.JSONStyle, f, x::LazyFeatureCollection)
     @emit "type" "FeatureCollection"
     bb = bbox(x)
-    bb === nothing || @emit "bbox" Elements(bb)
-    @emit "features" Objects(x)
+    bb === nothing || @emit "bbox" bb
+    @emit "features" lazyfeatures(x)
     return _emitextras(st, f, extras(x))
 end
 
-# A call with two style arguments also matches StructUtils' `applyeach(f, st, x)`; pin the style-first reading.
-for T in (Elements, Objects, Values, Members, DictMembers, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon,
-          GeometryCollection, Feature, FeatureCollection, LazyFeatureCollection)
-    @eval StructUtils.applyeach(st::JSON.JSONStyle, f::StructUtils.StructStyle, x::$T) =
-        invoke(StructUtils.applyeach, Tuple{JSON.JSONStyle,Any,$T}, st, f, x)
-end
-
-# --- Output size estimate ------------------------------------------------------
-
-# `JSON.json` allocates its buffer at `sizeguess` bytes and grows it geometrically from 512 when a
-# type has no estimate. This one leans high: `String` takes an oversized buffer without copying,
-# and each shortfall copies everything written so far.
-_coordbytes(::Type{Float32}) = 13
-_coordbytes(::Type) = 20
-
-_npoints(::Tuple) = 1
-_npoints(c::Vector{<:Tuple}) = length(c)
-_npoints(c::Vector) = sum(_npoints, c; init=0)
-
-_bboxbytes(::Nothing) = 0
-_bboxbytes(b::Vector) = 12 + 24 * length(b)
-_propbytes(::Nothing) = 4
-_propbytes(p::Union{AbstractDict,NamedTuple}) = 2 + 24 * length(p)
-_propbytes(p) = 512
-_extrasbytes(::Nothing) = 0
-_extrasbytes(e::Vector) = 64 * length(e)
-
-function JSON.sizeguess(g::AbstractGeometry{D,T}) where {D,T}
-    c = coordinates(g)
-    n = c === nothing ? 0 : _npoints(c)
-    return 40 + _bboxbytes(bbox(g)) + _extrasbytes(extras(g)) + n * (D * _coordbytes(T) + 4)
-end
-# A union-typed geometry reaches `sizeguess` as one concrete type. A GeometryCollection takes a flat
-# guess: an estimate that re-enters its own methods with a second signature is widened to `Any`.
-function _geombytes(g)
-    g === nothing && return 4
-    g isa Point && return JSON.sizeguess(g)
-    g isa LineString && return JSON.sizeguess(g)
-    g isa Polygon && return JSON.sizeguess(g)
-    g isa MultiPoint && return JSON.sizeguess(g)
-    g isa MultiLineString && return JSON.sizeguess(g)
-    g isa MultiPolygon && return JSON.sizeguess(g)
-    g isa GeometryCollection && return 48 + 512 * length(geometry(g))
-    return 512
-end
-function JSON.sizeguess(g::GeometryCollection)
-    n = 48 + _bboxbytes(bbox(g)) + _extrasbytes(extras(g))
-    for m in geometry(g)
-        n += _geombytes(m)
-    end
-    return n
-end
-JSON.sizeguess(x::Feature) =
-    64 + _bboxbytes(bbox(x)) + _geombytes(geometry(x)) + _propbytes(properties(x)) + _extrasbytes(extras(x))
-function JSON.sizeguess(x::FeatureCollection)
-    n = 40 + _bboxbytes(bbox(x)) + _extrasbytes(extras(x))
-    for f in features(x)
-        n += JSON.sizeguess(f)
-    end
-    return n
-end
+StructUtils.lower(::JSON.JSONStyle, x::Union{LazyFeature,LazyGeometry}) = materialize(x)
 
 # --- GeoInterface and Tables inputs lower into the GeoJSON types --------------
 

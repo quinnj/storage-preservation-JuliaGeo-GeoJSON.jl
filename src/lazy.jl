@@ -264,7 +264,7 @@ materialize(g::LazyGeometry{D,T}) where {D,T} = JSON.parse(lazyat(g), AnyGeometr
 function id(f::LazyFeature)
     pos = memberpos(f, "id")
     pos == 0 && return nothing
-    return first(readid(lazyat(_buf(f), pos)))
+    return first(StructUtils.make(READ_STYLE, Id, lazyat(_buf(f), pos)))
 end
 
 function _bboxat(buf, pos::Int, ::Type{T}) where {T}

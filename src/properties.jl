@@ -53,3 +53,6 @@ end
 Base.empty!(p::Properties) = (empty!(p.pairs); p)
 Base.copy(p::Properties) = Properties(copy(p.pairs))
 Base.sizehint!(p::Properties, n) = (sizehint!(p.pairs, n); p)
+
+# The reader appends; a document's duplicate keys are kept as written.
+StructUtils.addkeyval!(p::Properties, k::String, v) = push!(p.pairs, Pair{String,Any}(k, v))

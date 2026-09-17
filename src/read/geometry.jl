@@ -132,22 +132,9 @@ function readdepth!(f::GeomSink{D,T}, v::LazyValues, d::Int) where {D,T}
     return _baddepth(d)
 end
 
-struct GeomArraySink{D,T,S}
-    st::S
-    out::Vector{AnyGeometry{D,T}}
-end
-
-function (s::GeomArraySink{D,T})(_, v::LazyValues) where {D,T}
-    g, pos = StructUtils.make(s.st, AnyGeometry{D,T}, v)
-    push!(s.out, g)
-    return pos
-end
-
 @noinline function readgeoms(st, ::Val{D}, ::Type{T}, v::LazyValues) where {D,T}
     gettype(v) == ARRAY || throw(ArgumentError("\"geometries\" must be an array"))
-    out = AnyGeometry{D,T}[]
-    pos = applyarray(GeomArraySink{D,T,typeof(st)}(st, out), v)
-    return out, pos::Int
+    return StructUtils.make(st, Vector{AnyGeometry{D,T}}, v)
 end
 
 function (f::GeomSink{D,T})(k::PtrString, v::LazyValues) where {D,T}
@@ -176,7 +163,7 @@ function (f::GeomSink{D,T})(k::PtrString, v::LazyValues) where {D,T}
         f.bbox = val
         return pos
     end
-    ex, pos = _extra!(f.extras, k, v)
+    ex, pos = _extra!(f.st, f.extras, k, v)
     f.extras = ex
     return pos
 end
