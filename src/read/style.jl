@@ -38,14 +38,20 @@ function _extra!(st, extras::Extras, k::PtrString, v::LazyValues)
     return out, pos
 end
 
-# `applyarray` directly rather than `make(st, Vector{F}, v)`: the generic array path also
-# compiles JSON's object branch for the array closure, which the trim verifier cannot resolve.
+# A struct sink rather than a closure: the trim verifier resolves `applyarray` on a struct
+# but not on a closure capturing the style and output vector. Reading through the generic
+# `make(st, Vector{E}, v)` also compiles JSON's object branch for the array closure.
+struct ArraySink{E,S}
+    st::S
+    out::Vector{E}
+end
+function (s::ArraySink{E})(_, v::LazyValues) where {E}
+    val, pos = StructUtils.make(s.st, E, v)
+    push!(s.out, val)
+    return pos
+end
 function readarray(st, ::Type{E}, v::LazyValues) where {E}
     out = E[]
-    pos = applyarray(v) do _, e
-        val, p = StructUtils.make(st, E, e)
-        push!(out, val)
-        return p
-    end
+    pos = applyarray(ArraySink{E,typeof(st)}(st, out), v)
     return out, pos::Int
 end

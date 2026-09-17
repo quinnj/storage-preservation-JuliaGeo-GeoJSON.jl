@@ -16,12 +16,13 @@ Write `obj` as GeoJSON text to a `String`, an `IO`, or a file at `path` (streame
 `pretty` is `true`, `false`, or an indent width. When pretty printing, arrays shorter than
 `inline_limit` stay on one line, so the default keeps 2-D positions as `[x, y]`.
 """
+# `sort_keys=false`: properties write in container order, as they were read.
 write(obj; pretty=false, inline_limit=3, geometrycolumn=nothing) =
-    JSON.json(_lower(obj, geometrycolumn); pretty, inline_limit, style=GeoJSONStyle())
+    JSON.json(_lower(obj, geometrycolumn); pretty, inline_limit, sort_keys=false, style=GeoJSONStyle())
 write(io::IO, obj; pretty=false, inline_limit=3, geometrycolumn=nothing) =
-    JSON.json(io, _lower(obj, geometrycolumn); pretty, inline_limit, style=GeoJSONStyle())
+    JSON.json(io, _lower(obj, geometrycolumn); pretty, inline_limit, sort_keys=false, style=GeoJSONStyle())
 write(path::AbstractString, obj; pretty=false, inline_limit=3, geometrycolumn=nothing) =
-    JSON.json(path, _lower(obj, geometrycolumn); pretty, inline_limit, style=GeoJSONStyle())
+    JSON.json(path, _lower(obj, geometrycolumn); pretty, inline_limit, sort_keys=false, style=GeoJSONStyle())
 
 # --- applyeach on the default JSON style -------------------------------------
 
